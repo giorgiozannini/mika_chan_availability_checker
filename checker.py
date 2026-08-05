@@ -60,6 +60,10 @@ for attempt in range(3):
 """
                 send_telegram(message)
 
+            elif not is_available:
+                message = "Not available today"
+                send_telegram(message)
+
             save_state({"available": is_available})
 
             browser.close()
