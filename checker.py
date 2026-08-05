@@ -41,14 +41,12 @@ for attempt in range(3):
             page.goto(URL, timeout=60000)
             page.wait_for_timeout(5000)  # wait for JS to load
 
-            content = page.content().lower()
-
-            # 🔍 Customize this part depending on UI text
-            is_available = any(word in content for word in [
-                "prenota",
-                "available",
-                "disponibile"
-            ])
+            content = page.content()
+            
+            unavailable_phrase = "Al momento le prenotazioni risultano al completo."
+            
+            # If the phrase is NOT present, bookings are available
+            is_available = unavailable_phrase not in content
 
             state = load_state()
 
