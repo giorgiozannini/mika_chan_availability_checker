@@ -62,7 +62,7 @@ def main():
 
     if FULL_PHRASE in text:
         print("available=False")
-        telegram("Not available today")
+        telegram("Not available yet :'(")
     else:
         print("available=True")
         telegram(f'<b>Disponibilità trovata su Mikachan!</b>\n<a href="{URL}">Vai al sito</a>')
