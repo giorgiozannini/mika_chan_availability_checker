@@ -1,9 +1,9 @@
+#!/usr/bin/env python3
 import html as html_lib
-import json, os, re, sys, time
-import urllib.parse, urllib.request
+import os, re, sys, time
+import urllib.error, urllib.parse, urllib.request
 
 URL = "https://www.mikachan.it/"
-STATE_FILE = "last_availability.json"
 FULL_PHRASE = "prenotazioni risultano al completo"   # present => fully booked
 SANITY_MARKER = "mikachan"                           # page really loaded?
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -24,21 +24,24 @@ def visible_text(raw):
     return re.sub(r"\s+", " ", text.replace("\xa0", " ")).lower()
 
 
-def load_state():
-    try:
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
 def telegram(msg):
+    token, chat_id = os.environ.get("TOKEN", ""), os.environ.get("CHAT_ID", "")
+    if not token or not chat_id:
+        print("TOKEN or CHAT_ID is missing/empty", file=sys.stderr)
+        return False
     data = urllib.parse.urlencode({
-        "chat_id": os.environ["CHAT_ID"], "text": msg, "parse_mode": "HTML",
+        "chat_id": chat_id, "text": msg, "parse_mode": "HTML",
     }).encode()
-    url = f"https://api.telegram.org/bot{os.environ['TOKEN']}/sendMessage"
-    with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as r:
-        r.read()
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as r:
+            print("telegram ok:", r.read().decode()[:300])
+            return True
+    except urllib.error.HTTPError as e:
+        print(f"telegram HTTP {e.code}: {e.read().decode()[:300]}", file=sys.stderr)
+    except Exception as e:
+        print(f"telegram failed: {e}", file=sys.stderr)
+    return False
 
 
 def main():
@@ -50,22 +53,19 @@ def main():
             print(f"attempt {attempt + 1} failed: {e}", file=sys.stderr)
             time.sleep(5)
     else:
+        telegram("⚠️ Check Mikachan fallito: sito irraggiungibile")
         return 1
 
     if SANITY_MARKER not in text:
-        print("page doesn't look like mikachan.it, not alerting", file=sys.stderr)
+        telegram("⚠️ Check Mikachan fallito: pagina inattesa")
         return 1
 
-    available = FULL_PHRASE not in text
-    prev = load_state().get("available", False)
-    print(f"available={available} previous={prev}")
-
-    if available and not prev:
+    if FULL_PHRASE in text:
+        print("available=False")
+        telegram("Not available today")
+    else:
+        print("available=True")
         telegram(f'<b>Disponibilità trovata su Mikachan!</b>\n<a href="{URL}">Vai al sito</a>')
-
-    with open(STATE_FILE, "w") as f:
-        json.dump({"available": available,
-                   "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
     return 0
 
 
