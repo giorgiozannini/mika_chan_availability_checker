@@ -1,76 +1,73 @@
-from playwright.sync_api import sync_playwright
-import json
-import os
-import time
+import html as html_lib
+import json, os, re, sys, time
+import urllib.parse, urllib.request
 
 URL = "https://www.mikachan.it/"
 STATE_FILE = "last_availability.json"
+FULL_PHRASE = "prenotazioni risultano al completo"   # present => fully booked
+SANITY_MARKER = "mikachan"                           # page really loaded?
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
 
-def send_telegram(message):
-    token = os.getenv("TOKEN")
-    chat_id = os.getenv("CHAT_ID")
+def fetch(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": UA,
+                                               "Accept-Language": "it-IT,it;q=0.9"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        charset = r.headers.get_content_charset() or "utf-8"
+        return r.read().decode(charset, "replace")
 
-    import requests
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
-    )
+
+def visible_text(raw):
+    raw = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", raw)
+    text = html_lib.unescape(re.sub(r"(?s)<[^>]+>", " ", raw))
+    return re.sub(r"\s+", " ", text.replace("\xa0", " ")).lower()
 
 
 def load_state():
-    if not os.path.exists(STATE_FILE):
-        return {"available": False}
-    with open(STATE_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
-
-
-for attempt in range(3):
-    print(f"Attempt {attempt+1}")
-
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
 
-            page.goto(URL, timeout=60000)
-            page.wait_for_timeout(5000)  # wait for JS to load
 
-            content = page.content()
-            
-            unavailable_phrase = "Al momento le prenotazioni risultano al completo."
-            
-            # If the phrase is NOT present, bookings are available
-            is_available = unavailable_phrase not in content
+def telegram(msg):
+    data = urllib.parse.urlencode({
+        "chat_id": os.environ["CHAT_ID"], "text": msg, "parse_mode": "HTML",
+    }).encode()
+    url = f"https://api.telegram.org/bot{os.environ['TOKEN']}/sendMessage"
+    with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as r:
+        r.read()
 
-            state = load_state()
 
-            if is_available and not state["available"]:
-                print("🚨 NEW AVAILABILITY FOUND")
-
-                message = f"""
-<b>Disponibilità trovata su Mikachan!</b>
-
-<a href="{URL}">Vai al sito</a>
-"""
-                send_telegram(message)
-
-            elif not is_available:
-                message = "Not available today"
-                send_telegram(message)
-
-            save_state({"available": is_available})
-
-            browser.close()
-
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(5)
-        continue
+def main():
+    for attempt in range(3):
+        try:
+            text = visible_text(fetch(URL))
+            break
+        except Exception as e:
+            print(f"attempt {attempt + 1} failed: {e}", file=sys.stderr)
+            time.sleep(5)
     else:
-        break
+        return 1
+
+    if SANITY_MARKER not in text:
+        print("page doesn't look like mikachan.it, not alerting", file=sys.stderr)
+        return 1
+
+    available = FULL_PHRASE not in text
+    prev = load_state().get("available", False)
+    print(f"available={available} previous={prev}")
+
+    if available and not prev:
+        telegram(f'<b>Disponibilità trovata su Mikachan!</b>\n<a href="{URL}">Vai al sito</a>')
+
+    with open(STATE_FILE, "w") as f:
+        json.dump({"available": available,
+                   "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
