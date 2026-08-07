@@ -15,3 +15,16 @@ jobs:
         env:
           TOKEN: ${{ secrets.TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+      - name: Debug telegram creds
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          t, c = os.environ.get("TOKEN",""), os.environ.get("CHAT_ID","")
+          print(f"token   len={len(t)} clean={len(t.strip())}")
+          print(f"chat_id len={len(c)} clean={len(c.strip())} digits={c.strip().lstrip('-').isdigit()}")
+          with urllib.request.urlopen(f"https://api.telegram.org/bot{t.strip()}/getMe") as r:
+              print("bot:", json.load(r)["result"]["username"])
+          PY
